@@ -1,0 +1,486 @@
+Program.Sub.ScreenSU.Start
+Gui.fmMX..Create
+Gui.fmMX..Caption("FactoryWiz Integration Maintenance")
+Gui.fmMX..Size(10425,4500)
+Gui.fmMX..MinX(0)
+Gui.fmMX..MinY(0)
+Gui.fmMX..Position(0,0)
+Gui.fmMX..BackColor(-2147483633)
+Gui.fmMX..MousePointer(0)
+Gui.fmMX..Event(UnLoad,fmMX_UnLoad)
+Gui.fmMX.lblDir.Create(Label,"FWSET.exe Directory:",True,1740,255,0,105,210,True,0,"Arial",8,-2147483633,0)
+Gui.fmMX.txtDir.Create(TextBox,"",True,7350,300,0,1860,120,True,0,"Arial",8,-2147483643,1)
+Gui.fmMX.cmdDirSrch.Create(Button)
+Gui.fmMX.cmdDirSrch.Size(855,375)
+Gui.fmMX.cmdDirSrch.Position(9285,90)
+Gui.fmMX.cmdDirSrch.Caption("^")
+Gui.fmMX.cmdDirSrch.Event(Click,cmdDirSrch_Click)
+Gui.fmMX.cmdDirSV.Create(Button)
+Gui.fmMX.cmdDirSV.Size(1935,330)
+Gui.fmMX.cmdDirSV.Position(3855,465)
+Gui.fmMX.cmdDirSV.Caption("Save Path and IP")
+Gui.fmMX.cmdDirSV.Event(Click,cmdDirSv_Click)
+Gui.fmMX.GsWC.Create(GsGridControl)
+Gui.fmMX.GsWC.Size(10065,2730)
+Gui.fmMX.GsWC.Position(105,1170)
+Gui.fmMX.GsWC.Anchor(13)
+Gui.fmMX.GsWC.Event(RowCellClick,GsWC_RowCellClick)
+Gui.fmMX.GsWC.Event(CellValueChanged,GsWC_CellValueChanged)
+Gui.fmMX.lblWC.Create(Label,"Please manage your machine workcenters for FactoryWiz integration below:",True,5850,255,0,105,915,True,0,"Arial",8,-2147483633,0)
+Gui.fmMX.lblSrvIP.Create(Label,"FactoryWiz Server IP:",True,1935,255,0,105,570,True,0,"Arial",8,-2147483633,0)
+Gui.fmMX.txtSrvIP.Create(TextBox,"",True,1920,300,0,1860,480,True,0,"Arial",8,-2147483643,1)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sMXHook.Declare
+V.Local.bHookChk.Declare
+'TJS. OCT 2019
+'Customer: Shields Manufacturing, Inc.
+'Business Case: Customer has machines that are monitored by FactoryWiz and wants to send workorder information to FW for tracking.
+'Required Hooks: 15934 GUI START-JOB-PRE-HOOK (GUI START JOB BUTTON),15755 GUI SCAN-POST-HOOK, 15820 GUI REMOVE-JOBS-PRE-HOOK
+'15890 GUI PROCESS-POST-HOOK, 15915 GUI PROCESS-PRE-HOOK
+'Passed Variables: V.Passed.009996 (Workcenter),V.Passed.777777 (Code Override),V.Passed.009990(Job),V.Passed.009991(Suffix),V.Passed.009992(Sequence),V.Passed.009994(Employee Name), V.Passed.000132(PART),
+'V.Passed.000133(PART-REV)
+
+'TJS, DEC 2019:  Added part and rev to parameters passed to FW
+
+'Collect custom hook
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("select ID from HOOK_ASSOCIATION where SCRIPT_NAME = 'GCG_5675_FW_INT.g2u' and Right(ID,5) not in('15934','15755','15820','15890','15915')",V.Local.sMXHook)
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.If(V.Caller.Hook,=,"-1")
+	F.Intrinsic.Control.CallSub(MX)
+F.Intrinsic.Control.Else
+	F.Intrinsic.Control.SelectCase(V.Caller.Hook)
+		F.Intrinsic.Control.CaseAny("15934","15755","15952")
+			F.Intrinsic.Control.CallSub(JobStart)
+		F.Intrinsic.Control.CaseAny("15820","15890","15915")
+			F.Intrinsic.Control.CallSub(JobEnd)
+		F.Intrinsic.Control.Case(V.Local.sMXHook)'To accomodate maintenance program
+			F.Intrinsic.Control.CallSub(MX)
+	F.Intrinsic.Control.EndSelect
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.JobStart.Start
+F.Intrinsic.Control.Try
+V.Local.sDir.Declare
+V.Local.sSvrIP.Declare
+V.Local.sMachine.Declare
+V.Local.sMSG.Declare
+V.Local.sCMD.Declare
+V.Local.iRet.Declare
+V.Local.sJSS.Declare
+V.Local.sPart.Declare
+V.Local.sPartRev.Declare
+V.Local.iRunQty.Declare
+V.Local.sIsSetup.Declare
+V.Local.sBuild.Declare
+
+F.Intrinsic.String.RPad(V.Passed.000132.Trim," ",17,V.Local.sPart)
+F.Intrinsic.String.Build("{0}{1}",V.Local.sPart,V.Passed.000133,V.Local.sPartRev)
+
+F.Intrinsic.String.Build("{0}{1}{2}",V.Passed.009990.Trim,V.Passed.009991.Trim,V.Passed.009992.Trim,V.Local.sJSS)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+F.Intrinsic.String.Build("Select FLAG_SET_UP,UNITS_OPEN from V_JOB_OPERATIONS where JOB+SUFFIX+SEQ = '{0}'",V.Local.sJSS,V.Local.sBuild)
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sBuild,V.Local.sBuild)
+F.Intrinsic.String.Split(V.Local.sBuild,"*!*",V.Local.sBuild)
+
+F.Intrinsic.Control.If(V.Local.sBuild(0).Trim,=,"Y")
+	V.Local.sIsSetup.Set("SETUP")
+F.Intrinsic.Control.Else
+	V.Local.sIsSetup.Set("PRODUCTION")
+F.Intrinsic.Control.EndIf
+
+V.Local.iRunQty.Set(V.Local.sBuild(1).Trim)
+
+F.Intrinsic.String.Build("Select FW_NAME from GCG_5675_WC where MACHINE = '{0}' and FW_MACHINE = '1'",V.Passed.009996.Trim,V.Local.sMachine)
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sMachine,V.Local.sMachine)
+
+F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+	F.ODBC.Connection!conts.Close
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.Else
+	F.ODBC.Connection!conts.ExecuteAndReturn("Select FWSet_Dir,FW_Server From GCG_5675_FWSet_Dir",V.Local.sDir)
+	F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+		F.Intrinsic.String.Build("                                           JOB NOT STARTED!{0}{0}The directory for FWSet.exe(FactoryWiz) has NOT been Configured.{0}{0}               Please see your Global Shop Administrator.",V.Ambient.NewLine,V.Local.sMSG)
+		F.Intrinsic.UI.Msgbox(V.Local.sMSG,"WARNING!",0)
+		V.Passed.777777.Set(1)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Split(V.Local.sDir,"*!*",V.Local.sDir)
+	V.Local.sSvrIP.Set(V.Local.sDir(1))
+	V.Local.sDir.Set(V.Local.sDir(0))
+	F.Intrinsic.Control.If(V.Local.sDir.Right9,<>,"FWSet.exe")
+		F.Intrinsic.Control.If(V.Local.sDir.Right1,=,"\")
+			F.Intrinsic.String.Build("{0}FWSet.exe",V.Local.sDir,V.Local.sDir)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}\FWSet.exe",V.Local.sDir,V.Local.sDir)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.ODBC.Connection!conts.Close
+F.Intrinsic.Control.EndIf
+
+'\*****************************************************************Begin Output parameters to FWSet.exe********************************************************************************\
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"Job",V.Local.sMachine.Trim,V.Local.sJSS.Trim,V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"CNCOPERATOR",V.Local.sMachine.Trim,V.Passed.009994.Trim,V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"PARTID",V.Local.sMachine.Trim,V.Local.sPartRev.Trim,V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"MODE",V.Local.sMachine.Trim,V.Local.sIsSetup.Trim,V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"BATCHQTY",V.Local.sMachine.Trim,V.Local.iRunQty,V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+'\******************************************************************End Output parameters to FWSet.exe*********************************************************************************\
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.JobStart.End
+
+Program.Sub.JobEnd.Start
+F.Intrinsic.Control.Try
+V.Local.sDir.Declare
+V.Local.sSvrIP.Declare
+V.Local.sMachine.Declare
+V.Local.sMSG.Declare
+V.Local.sCMD.Declare
+V.Local.iRet.Declare
+V.Local.sJSS.Declare
+
+F.Intrinsic.String.Build("{0}{1}{2}",V.Passed.009990.Trim,V.Passed.009991.Trim,V.Passed.009992.Trim,V.Local.sJSS)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+F.Intrinsic.String.Build("Select FW_NAME from GCG_5675_WC where MACHINE = '{0}' and FW_MACHINE = '1'",V.Passed.009996.Trim,V.Local.sMachine)
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sMachine,V.Local.sMachine)
+
+F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.Else
+	F.Intrinsic.Control.If(V.Caller.Hook,=,15820)
+		V.Passed.777777.Set(1)
+		F.Intrinsic.UI.Msgbox("FactoryWiz Workcenter.  Job cannot be removed.", "ERROR",v.Local.iRet)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	F.ODBC.Connection!conts.ExecuteAndReturn("Select FWSet_Dir,FW_Server From GCG_5675_FWSet_Dir",V.Local.sDir)
+	F.Intrinsic.String.Split(V.Local.sDir,"*!*",V.Local.sDir)
+	V.Local.sSvrIP.Set(V.Local.sDir(1))
+	V.Local.sDir.Set(V.Local.sDir(0))
+	F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+		F.Intrinsic.String.Build("                                           CANNOT COMPLETE JOB!{0}{0}The directory for FWSet.exe(FactoryWiz) has NOT been Configured.{0}{0}               Please see your Global Shop Administrator.",V.Ambient.NewLine,V.Local.sMSG)
+		F.Intrinsic.UI.Msgbox(V.Local.sMSG,"WARNING!",0)
+		V.Passed.777777.Set(1)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.If(V.Local.sDir.Right9,<>,"FWSet.exe")
+		F.Intrinsic.Control.If(V.Local.sDir.Right1,=,"\")
+			F.Intrinsic.String.Build("{0}FWSet.exe",V.Local.sDir,V.Local.sDir)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}\FWSet.exe",V.Local.sDir,V.Local.sDir)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.ODBC.Connection!conts.Close
+F.Intrinsic.Control.EndIf
+
+'\*****************************************************************Begin Output parameters to FWSet.exe********************************************************************************\
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"CNCOPERATOR",V.Local.sMachine.Trim,"",V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"Job",V.Local.sMachine.Trim,"",V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"PARTID",V.Local.sMachine.Trim,"",V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"MODE",V.Local.sMachine.Trim,"",V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4}",V.Local.sDir.Trim,"BATCHQTY",V.Local.sMachine.Trim,"",V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Local.sCMD)
+
+F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+
+F.Intrinsic.UI.Sleep(1)
+
+F.Intrinsic.Control.If(V.Passed.000002.Trim,<>,0)
+	F.Intrinsic.String.Build("{0} {5} {1} {4}{2}{4} {4}{3}{4} {4}{6}{4} {4}{7}{4}",V.Local.sDir.Trim,"ScrapByJob",V.Local.sMachine.Trim,V.Local.sJSS.Trim,V.Ambient.DblQuote,V.Local.sSvrIP.Trim,V.Passed.000002.Trim,V.Passed.SCRAP-CODE.Trim,V.Local.sCMD)
+	F.Intrinsic.Task.LaunchAsync(V.Local.sCmd,4,V.Local.iRet)
+F.Intrinsic.Control.EndIf
+'\******************************************************************End Output parameters to FWSet.exe*********************************************************************************\
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.JobEnd.End
+
+Program.Sub.MX.Start
+F.Intrinsic.Control.Try
+V.Local.sCurDir.Declare
+
+'Find current FWSet.exe path and display on screen
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("Select FWSet_Dir,FW_Server From GCG_5675_FWSet_Dir",V.Local.sCurDir)
+F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+	Gui.fmMX.txtDir.Text("")
+	Gui.fmMX.txtSrvIP.Text("")
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Split(V.Local.sCurDir,"*!*",V.Local.sCurDir)
+	Gui.fmMX.txtDir.Text(V.Local.sCurDir(0))
+	Gui.fmMX.txtSrvIP.Text(V.Local.sCurDir(1))
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.CallSub(WCGrid)
+F.Intrinsic.Control.CallSub(SetIcon)
+
+Gui.fmMX..Show
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.MX.End
+
+Program.Sub.cmdDirSrch_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sDir.Declare
+
+'Allow Windows search for the FWSet.exe path and set
+Function.Intrinsic.UI.ShowOpenFileDiaLog("",,524288,V.Local.sDir)
+Gui.fmMX.txtDir.Text(V.Local.sDir)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdDirSrch_Click.End
+
+Program.Sub.cmdDirSv_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sSQL.Declare
+V.Local.sDir.Declare
+V.Local.sSrvIP.Declare
+V.Local.sRet.Declare
+
+V.Local.sDir.Set(V.Screen.fmMX!txtDir.Text)
+V.Local.sSrvIP.Set(V.Screen.fmMX!txtSrvIP.Text)
+
+'Only accept FWSet.exe as allowable value
+F.Intrinsic.Control.If(V.Local.sDir.Right9,<>,"FWSet.exe")
+	F.Intrinsic.UI.Msgbox("Please select a valid path to FWSet.exe","Error",0)
+F.Intrinsic.Control.Else
+'Write the correct path to 5675 table
+	F.Intrinsic.Control.If(V.Local.sSrvIP,=,"")
+		F.Intrinsic.UI.Msgbox("Please input the FactoryWiz server IP address","Error")
+	F.Intrinsic.Control.Else
+		F.ODBC.Connection!conts.OpenCompanyConnection
+		F.ODBC.Connection!conts.ExecuteAndReturn("select * from GCG_5675_FWSET_Dir",V.Local.sRet)
+			F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+				F.Intrinsic.String.Build("insert into GCG_5675_FWSet_Dir (FWSet_Dir,FW_Server) values('{0}','{1}')",V.Local.sDir.PSQLFriendly,V.Local.sSrvIP.PSQLFriendly,V.Local.sSQL)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.String.Build("update GCG_5675_FWSet_Dir set FWSet_Dir = '{0}',FW_Server = '{1}'",V.Local.sDir.PSQLFriendly,V.Local.sSrvIP.PSQLFriendly,V.Local.sSQL)
+			F.Intrinsic.Control.EndIf
+		F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+		F.ODBC.Connection!conts.Close
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdDirSv_Click.End
+
+Program.Sub.WCGrid.Start
+F.Intrinsic.Control.Try
+V.Local.sSQL.Declare
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+'Collect a list of current workcenters
+F.Data.DataTable.CreateFromSQL("dtWCMst","conts","select MACHINE,WC_DEPT,WC_NAME from WORKCENTERS")
+F.Data.DataTable.AddColumn("dtWCMst","FW_MACHINE","Boolean")
+
+'Populate WC Master datatable with those workcenters already marked as FW machines
+F.Data.Dictionary.CreateFromSQL("dictFWTrue","conts","select MACHINE,FW_MACHINE from GCG_5675_WC")
+F.Data.Dictionary.SetDefaultReturn("dictFWTrue",False)
+F.Data.DataTable.FillFromDictionary("dtWCMst","dictFWTrue","MACHINE","FW_MACHINE")
+
+'Update 5675 table with results
+F.Data.DataTable.SaveToDB("dtWCMst","conts","GCG_5675_WC","MACHINE",256,"MACHINE@!@MACHINE*!*WC_DEPT@!@WC_DEPT*!*WC_NAME@!@WC_NAME*!*FW_MACHINE@!@FW_MACHINE")
+
+'Delete any workcenters from 5675 where not in WORKCENTERS table
+F.ODBC.Connection!conts.Execute("delete GCG_5675_WC where MACHINE not in (select MACHINE from WORKCENTERS)")
+
+'Create 5675 datatable and display in grid
+F.Data.DataTable.CreateFromSQL("dtWC","conts","select * from GCG_5675_WC order by MACHINE",True)
+
+Gui.fmMX.GsWC.AddGridviewFromDatatable("gvWC","dtWC")
+Gui.fmMX.GsWC.MainView("gvWC")
+
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","MACHINE","HeaderFontBold",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_DEPT","HeaderFontBold",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_NAME","HeaderFontBold",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_MACHINE","HeaderFontBold",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_NAME","HeaderFontBold",True)
+
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","MACHINE","HeaderHAlignment","Center")
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_DEPT","HeaderHAlignment","Center")
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_NAME","HeaderHAlignment","Center")
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_MACHINE","HeaderHAlignment","Center")
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_NAME","HeaderHAlignment","Center")
+
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","MACHINE","CellHAlignment","Center")
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_DEPT","CellHAlignment","Center")
+
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_DEPT","Caption","Department")
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_NAME","Caption","WC Name")
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_MACHINE","Caption","FW Machine?")
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_NAME","Caption","FW Mach Name?")
+
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","MACHINE","AllowEdit",False)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","MACHINE","ReadOnly",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_DEPT","AllowEdit",False)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_DEPT","ReadOnly",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_NAME","AllowEdit",False)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","WC_NAME","ReadOnly",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_MACHINE","AllowEdit",False)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_MACHINE","ReadOnly",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_NAME","AllowEdit",True)
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_NAME","ReadOnly",False)
+
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_MACHINE","Width",40)
+
+Gui.fmMX.GsWC.SetColumnProperty("gvWC","FW_MACHINE","VisibleIndex",0)
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.WCGrid.End
+
+Program.Sub.GsWC_RowCellClick.Start
+F.Intrinsic.Control.Try
+
+'Verify that the column clicked was FW_MACHINE and update cell value as appropriate
+F.Intrinsic.Control.If(V.Args.Column,=,"FW_MACHINE")
+	F.Intrinsic.Control.If(V.DataTable.dtWC(V.Args.rowindex).FW_MACHINE!FieldVal)
+		F.Data.DataTable.SetValue("dtWC",V.Args.rowindex,"FW_MACHINE",False)
+	F.Intrinsic.Control.Else
+		F.Data.DataTable.SetValue("dtWC",V.Args.rowindex,"FW_MACHINE",True)
+F.Intrinsic.Control.EndIf
+'Save changes to 5675 table
+	F.ODBC.Connection!conts.OpenCompanyConnection
+	F.Data.DataTable.SaveToDB("dtWC","conts","GCG_5675_WC","MACHINE",256)
+	F.ODBC.Connection!conts.Close
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GsWC_RowCellClick.End
+
+Program.Sub.GsWC_CellValueChanged.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.Args.Column,=,"FW_NAME")
+	F.ODBC.Connection!conts.OpenCompanyConnection
+	F.Data.DataTable.SaveToDB("dtWC","conts","GCG_5675_WC","MACHINE",256)
+	F.ODBC.Connection!conts.Close
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GsWC_CellValueChanged.End
+
+Program.Sub.SetIcon.Start
+F.Intrinsic.Control.Try
+V.Local.sForm.Declare(String)
+V.Local.bExists.Declare(Boolean)
+V.Local.sIcon.Declare(String)
+V.Local.iCounter.Declare(Long)
+
+F.Intrinsic.String.Build("{0}\ART\gss2.ico",V.Caller.GlobalDir,V.Local.sIcon)
+F.Intrinsic.File.Exists(V.Local.sIcon, V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists.Not)
+    F.Intrinsic.String.Build("{0}\GAB\GAS\gss2.ico",V.Caller.PluginsDir,V.Local.sIcon)
+    F.Intrinsic.File.Exists(V.Local.sIcon, V.Local.bExists)
+    F.Intrinsic.Control.If(V.Local.bExists.Not)
+        F.Intrinsic.Control.ExitSub
+    F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.UI.GetFormList(V.Local.sForm)
+F.Intrinsic.String.Split(V.Local.sForm, "*!*", V.Local.sForm)
+
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.Local.sForm.UBound, 1)
+    Gui.[V.Local.sForm(V.Local.iCounter)]..Icon(V.Local.sIcon)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.SetIcon.End
+
+Program.Sub.fmMX_UnLoad.Start
+F.Intrinsic.Control.End
+Program.Sub.fmMX_UnLoad.End
+
+Program.Sub.Error.Start
+V.Local.sError.Declare
+V.Local.iRet.Declare
+V.Local.sSep.Declare
+
+F.Intrinsic.String.Build("-------------------------------------------------------------------------------------",,V.Local.sSep)
+F.Intrinsic.String.Build("({5}-{6}){0}{7}{0}Project: {4}{0}{7}{0}Sub: {1}{0}Error: {2}, {3}", V.Ambient.NewLine, V.Args.SubRoutine, V.Args.eNumber, V.Args.eDescription,V.Caller.ScriptFile,V.Ambient.Date, V.Ambient.Time,V.Local.sSep,V.Local.sError)
+F.Intrinsic.UI.Msgbox(V.Local.sError,"Error",V.Local.iRet)
+Program.Sub.Error.End
+
+
+
